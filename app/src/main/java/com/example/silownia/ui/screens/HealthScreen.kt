@@ -50,10 +50,12 @@ import com.example.silownia.ui.components.ScreenScroll
 import com.example.silownia.ui.components.SectionH2
 import com.example.silownia.ui.components.SelectField
 import com.example.silownia.ui.components.SelectOption
+import com.example.silownia.ui.components.TimePickerField
 import com.example.silownia.ui.theme.AppTheme
 import com.example.silownia.viewmodel.JournalViewModel
 import kotlinx.coroutines.delay
 import java.util.Calendar
+import java.util.Locale
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -67,7 +69,7 @@ fun HealthScreen(viewModel: JournalViewModel) {
     val goal = viewModel.stGoal()
     var customGoalInput by remember(goal) { mutableStateOf(goal.toString()) }
 
-    var rstA by remember { mutableStateOf("") } // 'd' | 'a' | ""
+    var rstA by remember { mutableStateOf("") } // 'd' | 'a' | 'w' | ""
 
     LaunchedEffect(rstA) {
         if (rstA.isNotEmpty()) {
@@ -76,7 +78,47 @@ fun HealthScreen(viewModel: JournalViewModel) {
         }
     }
 
-    var showImportDetails by remember { mutableStateOf(false) }
+    // Hydration state
+    val waterMl = viewModel.waterDay(cur)
+    val waterGoalMl = viewModel.waterGoal()
+    val defaultWaterGoalMl = viewModel.waterDefaultGoal()
+    var exactWater by remember { mutableStateOf("") }
+    var waterGoalInput by remember(waterGoalMl) { mutableStateOf(waterGoalMl.toString()) }
+
+    val addWater = { delta: Int ->
+        viewModel.updateState { prev ->
+            val curVal = prev.water[cur] ?: 0
+            prev.copy(water = prev.water + (cur to max(0, curVal + delta)))
+        }
+    }
+
+    val handleSetExactWater = {
+        if (exactWater.isNotBlank()) {
+            val valMl = max(0, num(exactWater).roundToInt())
+            viewModel.updateState { it.copy(water = it.water + (cur to valMl)) }
+            exactWater = ""
+        }
+    }
+
+    val handleResetDayWater = {
+        if (rstA != "w") {
+            rstA = "w"
+        } else {
+            viewModel.updateState { it.copy(water = it.water - cur) }
+            rstA = ""
+        }
+    }
+
+    val handleSetWaterGoalForm = {
+        val v = num(waterGoalInput).roundToInt()
+        if (v in 500..10000) {
+            viewModel.updateState { it.copy(wg = v) }
+        }
+    }
+
+    val handleResetWaterGoalDefault = {
+        viewModel.updateState { it.copy(wg = null) }
+    }
 
     // Sleep state
     val sleepList = state.sleep
@@ -169,6 +211,14 @@ fun HealthScreen(viewModel: JournalViewModel) {
         state.steps.keys.filter { (state.steps[it] ?: 0) > 0 }.sorted().takeLast(14)
     }
 
+    // Hydration 7-day stats & chart
+    val waterVals7 = last7Dates.map { viewModel.waterDay(it) }.filter { it > 0 }
+    val avgWater = if (waterVals7.isNotEmpty()) waterVals7.average() else 0.0
+    val hitWater = last7Dates.count { viewModel.waterDay(it) >= waterGoalMl }
+    val waterChartKeys = remember(state.water) {
+        state.water.keys.filter { (state.water[it] ?: 0) > 0 }.sorted().takeLast(14)
+    }
+
     // Sleep handlers
     val handleSaveSleep = {
         val dpVal = if (deepSleep.trim().isEmpty()) null else max(0, num(deepSleep).roundToInt())
@@ -218,7 +268,8 @@ fun HealthScreen(viewModel: JournalViewModel) {
         DayNav(
             cur = cur,
             today = viewModel.today,
-            onShift = { viewModel.shift(it) }
+            onShift = { viewModel.shift(it) },
+            onDateSelected = { viewModel.setCur(it) }
         )
 
         // Kroki
@@ -261,7 +312,7 @@ fun HealthScreen(viewModel: JournalViewModel) {
 
             Spacer(modifier = Modifier.height(10.dp))
             Text(
-                text = "≈ ${String.format(java.util.Locale.US, "%.1f", km)} km · ok. ${kc.roundToInt()} kcal (orientacyjnie)",
+                text = "≈ ${String.format(Locale.US, "%.1f", km)} km · ok. ${kc.roundToInt()} kcal (orientacyjnie)",
                 fontSize = 14.sp,
                 color = AppTheme.colors.mut
             )
@@ -316,30 +367,6 @@ fun HealthScreen(viewModel: JournalViewModel) {
                     label = if (rstA == "a") "Na pewno? Dotknij ponownie" else "Usuń historię kroków",
                     active = rstA == "a",
                     onClick = handleResetAllSteps
-                )
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { showImportDetails = !showImportDetails }
-                    .padding(vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = if (showImportDetails) "▾ Automatyczny import z iPhone’a" else "▸ Automatyczny import z iPhone’a",
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = AppTheme.colors.ink
-                )
-            }
-            if (showImportDetails) {
-                Text(
-                    text = "W aplikacji Skróty utwórz automatyzację o stałej porze (np. 22:00): pobierz kroki z dzisiaj, a potem otwórz URL z parametrem kroki=.",
-                    fontSize = 14.sp,
-                    color = AppTheme.colors.mut,
-                    lineHeight = 20.sp
                 )
             }
         }
@@ -467,6 +494,199 @@ fun HealthScreen(viewModel: JournalViewModel) {
             }
         }
 
+        // Śledzenie nawodnienia
+        SectionH2(text = "Śledzenie nawodnienia")
+        Card(modifier = Modifier.padding(top = 0.dp)) {
+            val waterLiters = waterMl / 1000.0
+            val glassesCount = (waterMl / 250.0)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Bottom
+            ) {
+                Column {
+                    Text(
+                        text = "${fmtN(waterMl)} ml",
+                        fontSize = 48.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = AppTheme.colors.ink,
+                        lineHeight = 50.sp
+                    )
+                    Text(
+                        text = "${String.format(Locale("pl", "PL"), "%.2f", waterLiters)} l · ok. ${String.format(Locale("pl", "PL"), "%.1f", glassesCount)} szklanek",
+                        fontSize = 14.sp,
+                        color = AppTheme.colors.mut
+                    )
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = "cel ${fmtN(waterGoalMl)} ml",
+                        fontSize = 15.sp,
+                        color = AppTheme.colors.mut
+                    )
+                    Text(
+                        text = if (waterMl >= waterGoalMl) "cel osiągnięty" else "brakuje ${fmtN(waterGoalMl - waterMl)} ml",
+                        fontSize = 15.sp,
+                        color = AppTheme.colors.mut,
+                        textAlign = TextAlign.End
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+            Bar(
+                pct = if (waterGoalMl > 0) (waterMl.toDouble() / waterGoalMl) * 100.0 else 0.0,
+                over = waterMl >= waterGoalMl
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf(
+                    200 to "+ 200 ml",
+                    250 to "+ 250 ml (szklanka)",
+                    500 to "+ 500 ml (butelka)",
+                    750 to "+ 750 ml (bidon)"
+                ).forEach { (ml, label) ->
+                    ChipButton(
+                        label = label,
+                        onClick = { addWater(ml) }
+                    )
+                }
+                ChipButton(
+                    label = "− 250 ml",
+                    onClick = { addWater(-250) }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.Bottom
+            ) {
+                Field(label = "Ustaw dokładną ilość (ml)", modifier = Modifier.weight(1f)) {
+                    AppInput(
+                        value = exactWater,
+                        onValueChange = { exactWater = it },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        placeholder = "np. 2250"
+                    )
+                }
+                GoButton(label = "Zapisz", onClick = handleSetExactWater)
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+            ChipButton(
+                label = if (rstA == "w") "Na pewno? Dotknij ponownie" else "Wyzeruj wodę z tego dnia",
+                active = rstA == "w",
+                onClick = handleResetDayWater
+            )
+        }
+
+        // Statystyki nawodnienia 7 dni
+        Card {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = if (avgWater > 0) "${fmtN(avgWater.roundToInt())} ml" else "–",
+                        fontSize = 26.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = AppTheme.colors.ink
+                    )
+                    Text(
+                        text = "średnio dziennie (7 dni)",
+                        fontSize = 13.sp,
+                        color = AppTheme.colors.mut
+                    )
+                }
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "$hitWater / 7",
+                        fontSize = 26.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = AppTheme.colors.ink
+                    )
+                    Text(
+                        text = "dni z osiągniętym celem",
+                        fontSize = 13.sp,
+                        color = AppTheme.colors.mut
+                    )
+                }
+            }
+
+            if (waterChartKeys.size > 1) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Wypita woda w kolejnych dniach (litry)",
+                    fontSize = 14.sp,
+                    color = AppTheme.colors.mut
+                )
+                ChartCanvas(
+                    pts = waterChartKeys.map { d ->
+                        ChartPoint(d, (state.water[d] ?: 0) / 1000.0)
+                    }
+                )
+            }
+        }
+
+        // Cel nawodnienia
+        Card {
+            Text(
+                text = "Cel dziennego nawodnienia",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = AppTheme.colors.ink
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "Zalecane bazowe spożycie to ok. 35 ml na każdy kilogram masy ciała (dla Ciebie: ${fmtN(defaultWaterGoalMl)} ml). W dni treningowe warto wypić o 500–1000 ml więcej.",
+                fontSize = 14.sp,
+                color = AppTheme.colors.mut,
+                lineHeight = 20.sp
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.Bottom
+            ) {
+                Field(label = "Własny cel wody (ml)", modifier = Modifier.weight(1f)) {
+                    AppInput(
+                        value = waterGoalInput,
+                        onValueChange = { waterGoalInput = it },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        placeholder = "np. 3000"
+                    )
+                }
+                GoButton(label = "Zapisz cel", onClick = handleSetWaterGoalForm)
+            }
+
+            if (state.wg != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Przywróć cel domyślny (${fmtN(defaultWaterGoalMl)} ml)",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = AppTheme.colors.acc,
+                    textDecoration = TextDecoration.Underline,
+                    modifier = Modifier.clickable { handleResetWaterGoalDefault() }
+                )
+            }
+        }
+
         // Sen
         SectionH2(text = "Sen")
         Card(modifier = Modifier.padding(top = 0.dp)) {
@@ -474,12 +694,18 @@ fun HealthScreen(viewModel: JournalViewModel) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Field(label = "Poszedłem spać", modifier = Modifier.weight(1f)) {
-                    AppInput(value = bedTime, onValueChange = { bedTime = it }, placeholder = "23:00")
-                }
-                Field(label = "Wstałem", modifier = Modifier.weight(1f)) {
-                    AppInput(value = wakeTime, onValueChange = { wakeTime = it }, placeholder = "07:00")
-                }
+                TimePickerField(
+                    label = "Poszedłem spać",
+                    value = bedTime,
+                    onValueChange = { bedTime = it },
+                    modifier = Modifier.weight(1f)
+                )
+                TimePickerField(
+                    label = "Wstałem",
+                    value = wakeTime,
+                    onValueChange = { wakeTime = it },
+                    modifier = Modifier.weight(1f)
+                )
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -557,7 +783,7 @@ fun HealthScreen(viewModel: JournalViewModel) {
                         color = AppTheme.colors.ink
                     )
                     Text(
-                        text = "cel ${String.format(java.util.Locale.US, "%.0f", sleepGoal)} h\n" +
+                        text = "cel ${String.format(Locale.US, "%.0f", sleepGoal)} h\n" +
                                 if (over) "cel osiągnięty" else "brakuje ${hm(max(0, goalMi - mi))}",
                         fontSize = 15.sp,
                         color = AppTheme.colors.mut,
@@ -667,7 +893,7 @@ fun HealthScreen(viewModel: JournalViewModel) {
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = "${String.format(java.util.Locale.US, "%.1f", avgQuality)} / 5",
+                            text = "${String.format(Locale.US, "%.1f", avgQuality)} / 5",
                             fontSize = 28.sp,
                             fontWeight = FontWeight.Bold,
                             color = AppTheme.colors.ink

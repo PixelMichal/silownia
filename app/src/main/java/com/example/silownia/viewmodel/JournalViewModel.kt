@@ -6,15 +6,25 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.media.AudioManager
+import android.media.ToneGenerator
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
 import com.example.silownia.data.DateUtils
 import com.example.silownia.data.JournalData
 import com.example.silownia.data.JournalRepository
 import com.example.silownia.data.JournalState
 import com.example.silownia.data.WorkoutSetEntry
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlin.math.sqrt
 
 enum class AppTab(val label: String) {
@@ -46,8 +56,19 @@ class JournalViewModel(application: Application) : AndroidViewModel(application)
     private val _selectedTab = MutableStateFlow(AppTab.DIET)
     val selectedTab: StateFlow<AppTab> = _selectedTab.asStateFlow()
 
-    // Automatic sensor step counter
+    // Rest timer state (seconds remaining, 0 = inactive)
+    private val _restTimerSeconds = MutableStateFlow(0)
+    val restTimerSeconds: StateFlow<Int> = _restTimerSeconds.asStateFlow()
+
+    private val _restTimerTotal = MutableStateFlow(120)
+    val restTimerTotal: StateFlow<Int> = _restTimerTotal.asStateFlow()
+
+    private var timerJob: Job? = null
+
+    // Hardware / fallback step sensor
     private val sensorManager = application.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+    private var usingHardwareStepSensor = false
+    private var lastCounterTotal: Int? = null
     private var stFilter = 9.81
     private var stUp = false
     private var stLast = 0L
@@ -57,13 +78,34 @@ class JournalViewModel(application: Application) : AndroidViewModel(application)
         startStepSensor()
     }
 
-    private fun startStepSensor() {
-        val sensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-        if (sensor != null) {
+    fun startStepSensor() {
+        sensorManager?.unregisterListener(this)
+        val stepCounter = sensorManager?.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
+        val stepDetector = sensorManager?.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)
+
+        if (stepCounter != null) {
+            val ok = sensorManager.registerListener(this, stepCounter, SensorManager.SENSOR_DELAY_NORMAL)
+            if (ok) {
+                usingHardwareStepSensor = true
+                return
+            }
+        }
+        if (stepDetector != null) {
+            val ok = sensorManager.registerListener(this, stepDetector, SensorManager.SENSOR_DELAY_NORMAL)
+            if (ok) {
+                usingHardwareStepSensor = true
+                return
+            }
+        }
+
+        // Fallback to accelerometer if hardware step sensor is unavailable or permission not granted yet
+        usingHardwareStepSensor = false
+        val accel = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        if (accel != null) {
             stFilter = 9.81
             stUp = false
             stLast = System.currentTimeMillis()
-            sensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_UI)
+            sensorManager.registerListener(this, accel, SensorManager.SENSOR_DELAY_UI)
         }
     }
 
@@ -123,25 +165,129 @@ class JournalViewModel(application: Application) : AndroidViewModel(application)
         return _state.value.steps[d] ?: 0
     }
 
+    fun waterDefaultGoal(): Int {
+        val w = _state.value.bio?.w
+        return if (w != null && w > 0) {
+            (((w * 35.0) / 50.0).toInt() * 50).coerceIn(1500, 6000)
+        } else {
+            2500
+        }
+    }
+
+    fun waterGoal(): Int {
+        val wg = _state.value.wg
+        if (wg != null && wg > 0) return wg
+        return waterDefaultGoal()
+    }
+
+    fun waterDay(d: String): Int {
+        return _state.value.water[d] ?: 0
+    }
+
+    // Rest timer methods
+    fun startRestTimer(seconds: Int = 120) {
+        timerJob?.cancel()
+        _restTimerTotal.value = seconds
+        _restTimerSeconds.value = seconds
+        timerJob = viewModelScope.launch {
+            while (_restTimerSeconds.value > 0) {
+                delay(1000)
+                _restTimerSeconds.value -= 1
+            }
+            notifyRestFinished()
+        }
+    }
+
+    fun addRestTime(deltaSeconds: Int) {
+        val next = (_restTimerSeconds.value + deltaSeconds).coerceAtLeast(0)
+        if (next == 0) {
+            stopRestTimer()
+        } else {
+            if (next > _restTimerTotal.value) {
+                _restTimerTotal.value = next
+            }
+            _restTimerSeconds.value = next
+        }
+    }
+
+    fun stopRestTimer() {
+        timerJob?.cancel()
+        _restTimerSeconds.value = 0
+    }
+
+    private fun notifyRestFinished() {
+        try {
+            val app = getApplication<Application>()
+            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vm = app.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
+                vm?.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                app.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator?.vibrate(VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator?.vibrate(500)
+            }
+        } catch (_: Exception) {
+        }
+        try {
+            val toneGen = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 85)
+            toneGen.startTone(ToneGenerator.TONE_PROP_BEEP2, 400)
+        } catch (_: Exception) {
+        }
+    }
+
     override fun onSensorChanged(event: SensorEvent?) {
         if (event == null) return
-        val ax = event.values[0]
-        val ay = event.values[1]
-        val az = event.values[2]
-        val m = sqrt((ax * ax + ay * ay + az * az).toDouble())
-        val t = System.currentTimeMillis()
-        stFilter = stFilter * 0.6 + m * 0.4
-        val d = stFilter - 9.81
-
-        if (d > 0.7 && !stUp && (t - stLast > 320)) {
-            stUp = true
-            stLast = t
-            updateState { prev ->
-                val prevSteps = prev.steps[today] ?: 0
-                prev.copy(steps = prev.steps + (today to (prevSteps + 1)))
+        when (event.sensor.type) {
+            Sensor.TYPE_STEP_COUNTER -> {
+                val totalSinceBoot = event.values[0].toInt()
+                val prevTotal = lastCounterTotal
+                lastCounterTotal = totalSinceBoot
+                if (prevTotal != null) {
+                    val delta = totalSinceBoot - prevTotal
+                    if (delta in 1..500) {
+                        val currentDay = DateUtils.ymd()
+                        updateState { prev ->
+                            val prevSteps = prev.steps[currentDay] ?: 0
+                            prev.copy(steps = prev.steps + (currentDay to (prevSteps + delta)))
+                        }
+                    }
+                }
             }
-        } else if (d < 0.15) {
-            stUp = false
+            Sensor.TYPE_STEP_DETECTOR -> {
+                val stepsDetected = event.values.size.coerceAtLeast(1)
+                val currentDay = DateUtils.ymd()
+                updateState { prev ->
+                    val prevSteps = prev.steps[currentDay] ?: 0
+                    prev.copy(steps = prev.steps + (currentDay to (prevSteps + stepsDetected)))
+                }
+            }
+            Sensor.TYPE_ACCELEROMETER -> {
+                if (usingHardwareStepSensor) return
+                val ax = event.values[0]
+                val ay = event.values[1]
+                val az = event.values[2]
+                val m = sqrt((ax * ax + ay * ay + az * az).toDouble())
+                val t = System.currentTimeMillis()
+                stFilter = stFilter * 0.6 + m * 0.4
+                val d = stFilter - 9.81
+
+                if (d > 0.7 && !stUp && (t - stLast > 320)) {
+                    stUp = true
+                    stLast = t
+                    val currentDay = DateUtils.ymd()
+                    updateState { prev ->
+                        val prevSteps = prev.steps[currentDay] ?: 0
+                        prev.copy(steps = prev.steps + (currentDay to (prevSteps + 1)))
+                    }
+                } else if (d < 0.15) {
+                    stUp = false
+                }
+            }
         }
     }
 
@@ -151,6 +297,7 @@ class JournalViewModel(application: Application) : AndroidViewModel(application)
 
     override fun onCleared() {
         super.onCleared()
+        timerJob?.cancel()
         sensorManager?.unregisterListener(this)
     }
 }

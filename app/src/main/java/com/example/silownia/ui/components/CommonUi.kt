@@ -1,7 +1,10 @@
 package com.example.silownia.ui.components
 
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -9,6 +12,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -22,7 +26,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -50,24 +57,25 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.silownia.data.DateUtils
 import com.example.silownia.ui.theme.AppTheme
 import com.example.silownia.viewmodel.AppTab
+import java.util.Calendar
+import java.util.Locale
 
 @Composable
 fun ScreenScroll(
     modifier: Modifier = Modifier,
+    scrollState: ScrollState = rememberScrollState(),
     content: @Composable ColumnScope.() -> Unit
 ) {
-    val scrollState = rememberScrollState()
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -88,12 +96,40 @@ fun ScreenScroll(
 }
 
 @Composable
+fun ScreenLazyColumn(
+    modifier: Modifier = Modifier,
+    listState: LazyListState = rememberLazyListState(),
+    content: LazyListScope.() -> Unit
+) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(AppTheme.colors.bg)
+            .statusBarsPadding(),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                .widthIn(max = 560.dp)
+                .fillMaxSize()
+                .padding(horizontal = 16.dp),
+            contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
+            content = content
+        )
+    }
+}
+
+@Composable
 fun DayNav(
     title: String? = null,
     cur: String = "",
     today: String = "",
-    onShift: (Int) -> Unit = {}
+    onShift: (Int) -> Unit = {},
+    onDateSelected: ((String) -> Unit)? = null
 ) {
+    val context = LocalContext.current
+
     if (title != null) {
         Box(
             modifier = Modifier
@@ -110,6 +146,25 @@ fun DayNav(
             )
         }
         return
+    }
+
+    val openCalendar = {
+        val parts = cur.split("-")
+        val cal = Calendar.getInstance()
+        val year = parts.getOrNull(0)?.toIntOrNull() ?: cal.get(Calendar.YEAR)
+        val month = (parts.getOrNull(1)?.toIntOrNull() ?: (cal.get(Calendar.MONTH) + 1)) - 1
+        val day = parts.getOrNull(2)?.toIntOrNull() ?: cal.get(Calendar.DAY_OF_MONTH)
+
+        DatePickerDialog(
+            context,
+            { _, y, m, d ->
+                val formatted = String.format(Locale.US, "%04d-%02d-%02d", y, m + 1, d)
+                onDateSelected?.invoke(formatted)
+            },
+            year,
+            month,
+            day
+        ).show()
     }
 
     Row(
@@ -137,7 +192,11 @@ fun DayNav(
         }
 
         Column(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(enabled = onDateSelected != null) { openCalendar() }
+                .padding(vertical = 2.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
@@ -418,6 +477,114 @@ fun AppInput(
     )
 }
 
+@Composable
+fun TimePickerField(
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val parts = value.split(":")
+    val initHour = parts.getOrNull(0)?.toIntOrNull() ?: 23
+    val initMinute = parts.getOrNull(1)?.toIntOrNull() ?: 0
+
+    Field(label = label, modifier = modifier) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 52.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(AppTheme.colors.bg)
+                .border(1.dp, AppTheme.colors.line, RoundedCornerShape(10.dp))
+                .clickable {
+                    TimePickerDialog(
+                        context,
+                        { _, h, m ->
+                            onValueChange(String.format(Locale.US, "%02d:%02d", h, m))
+                        },
+                        initHour,
+                        initMinute,
+                        true
+                    ).show()
+                }
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+            contentAlignment = Alignment.CenterStart
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = value,
+                    fontSize = 16.sp,
+                    color = AppTheme.colors.ink
+                )
+                Text(
+                    text = "🕒",
+                    fontSize = 14.sp
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun DatePickerField(
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val parts = value.split("-")
+    val cal = Calendar.getInstance()
+    val initYear = parts.getOrNull(0)?.toIntOrNull() ?: cal.get(Calendar.YEAR)
+    val initMonth = (parts.getOrNull(1)?.toIntOrNull() ?: (cal.get(Calendar.MONTH) + 1)) - 1
+    val initDay = parts.getOrNull(2)?.toIntOrNull() ?: cal.get(Calendar.DAY_OF_MONTH)
+
+    Field(label = label, modifier = modifier) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 52.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(AppTheme.colors.bg)
+                .border(1.dp, AppTheme.colors.line, RoundedCornerShape(10.dp))
+                .clickable {
+                    DatePickerDialog(
+                        context,
+                        { _, y, m, d ->
+                            onValueChange(String.format(Locale.US, "%04d-%02d-%02d", y, m + 1, d))
+                        },
+                        initYear,
+                        initMonth,
+                        initDay
+                    ).show()
+                }
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+            contentAlignment = Alignment.CenterStart
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = value,
+                    fontSize = 16.sp,
+                    color = AppTheme.colors.ink
+                )
+                Text(
+                    text = "📅",
+                    fontSize = 14.sp
+                )
+            }
+        }
+    }
+}
+
 data class SelectOption(
     val value: String,
     val label: String
@@ -612,7 +779,6 @@ fun ChartCanvas(
             return topAreaHeight + (1f - ratio) * chartHeight
         }
 
-        // Draw horizontal grid lines at lo and hi
         val yHi = getY(hi)
         val yLo = getY(lo)
         drawLine(
@@ -628,13 +794,11 @@ fun ChartCanvas(
             strokeWidth = 1.dp.toPx()
         )
 
-        // Draw text labels for hi and lo
-        val hiStr = String.format(java.util.Locale.US, "%.1f", hi)
-        val loStr = String.format(java.util.Locale.US, "%.1f", lo)
+        val hiStr = String.format(Locale.US, "%.1f", hi)
+        val loStr = String.format(Locale.US, "%.1f", lo)
         drawContext.canvas.nativeCanvas.drawText(hiStr, 0f, yHi + 4.dp.toPx(), textPaint)
         drawContext.canvas.nativeCanvas.drawText(loStr, 0f, yLo + 4.dp.toPx(), textPaint)
 
-        // Draw polyline
         val path = Path()
         pts.forEachIndexed { i, p ->
             val px = getX(i)
@@ -651,7 +815,6 @@ fun ChartCanvas(
             )
         )
 
-        // Draw point dots
         pts.forEachIndexed { i, p ->
             val px = getX(i)
             val py = getY(p.y)
@@ -662,7 +825,6 @@ fun ChartCanvas(
             )
         }
 
-        // Bottom date labels (first and last)
         val firstDateLabel = DateUtils.dlabel(pts.first().d)
         val lastDateLabel = DateUtils.dlabel(pts.last().d)
         drawContext.canvas.nativeCanvas.drawText(

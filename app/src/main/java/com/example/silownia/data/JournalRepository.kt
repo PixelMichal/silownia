@@ -192,6 +192,18 @@ class JournalRepository(context: Context) {
                 )
             } else null
 
+            val waterMap = mutableMapOf<String, Int>()
+            val waterObj = json.optJSONObject("water")
+            if (waterObj != null) {
+                val keys = waterObj.keys()
+                while (keys.hasNext()) {
+                    val k = keys.next()
+                    waterMap[k] = waterObj.optInt(k, 0)
+                }
+            }
+
+            val wg = if (json.has("wg") && !json.isNull("wg")) json.optInt("wg", 2500) else null
+
             JournalState(
                 goals = goals,
                 meals = mealsList,
@@ -205,7 +217,9 @@ class JournalRepository(context: Context) {
                 myrec = myrecList,
                 myex = myexList,
                 steps = stepsMap,
-                stg = stg
+                stg = stg,
+                water = waterMap,
+                wg = wg
             )
         } catch (_: Exception) {
             JournalState()
@@ -341,6 +355,14 @@ class JournalRepository(context: Context) {
                 stg.g?.let { stgObj.put("g", it) }
                 json.put("stg", stgObj)
             }
+
+            val waterObj = JSONObject()
+            state.water.forEach { (k, v) ->
+                waterObj.put(k, v)
+            }
+            json.put("water", waterObj)
+
+            state.wg?.let { json.put("wg", it) }
 
             prefs.edit().putString(STORAGE_KEY, json.toString()).apply()
         } catch (_: Exception) {

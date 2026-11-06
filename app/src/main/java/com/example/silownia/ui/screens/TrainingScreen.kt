@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -24,10 +26,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextDecoration
@@ -42,15 +47,19 @@ import com.example.silownia.data.WorkoutSetEntry
 import com.example.silownia.data.fmtN
 import com.example.silownia.data.num
 import com.example.silownia.ui.components.AppInput
+import com.example.silownia.ui.components.Bar
 import com.example.silownia.ui.components.Card
 import com.example.silownia.ui.components.ChipButton
 import com.example.silownia.ui.components.DayNav
 import com.example.silownia.ui.components.Field
 import com.example.silownia.ui.components.GoButton
-import com.example.silownia.ui.components.ScreenScroll
+import com.example.silownia.ui.components.MiniButton
+import com.example.silownia.ui.components.ScreenLazyColumn
 import com.example.silownia.ui.components.SectionH2
 import com.example.silownia.ui.theme.AppTheme
 import com.example.silownia.viewmodel.JournalViewModel
+import kotlinx.coroutines.launch
+import java.util.Locale
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -60,6 +69,12 @@ fun TrainingScreen(viewModel: JournalViewModel) {
     val state by viewModel.state.collectAsState()
     val cur by viewModel.cur.collectAsState()
     val pe by viewModel.pe.collectAsState()
+    val restSeconds by viewModel.restTimerSeconds.collectAsState()
+    val restTotal by viewModel.restTimerTotal.collectAsState()
+
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    val kgFocusRequester = remember { FocusRequester() }
 
     var kg by remember { mutableStateOf("") }
     var reps by remember { mutableStateOf("") }
@@ -114,6 +129,7 @@ fun TrainingScreen(viewModel: JournalViewModel) {
             kg = ""
             reps = ""
             setsCount = "1"
+            viewModel.startRestTimer(120)
         }
     }
 
@@ -124,6 +140,10 @@ fun TrainingScreen(viewModel: JournalViewModel) {
     val handleUseExercise = { name: String ->
         viewModel.setPe(name)
         showSuggestions = false
+        scope.launch {
+            listState.animateScrollToItem(0)
+            kgFocusRequester.requestFocus()
+        }
     }
 
     val planKeys = remember {
@@ -191,38 +211,197 @@ fun TrainingScreen(viewModel: JournalViewModel) {
 
     val totalVolume = todaySets.sumOf { (it.kg * it.r * it.s).toLong() }
 
-    ScreenScroll {
-        DayNav(
-            cur = cur,
-            today = viewModel.today,
-            onShift = { viewModel.shift(it) }
-        )
+    ScreenLazyColumn(listState = listState) {
+        item {
+            DayNav(
+                cur = cur,
+                today = viewModel.today,
+                onShift = { viewModel.shift(it) },
+                onDateSelected = { viewModel.setCur(it) }
+            )
 
-        // Dodaj serię
-        SectionH2(text = "Dodaj serię")
-        Card(modifier = Modifier.padding(top = 0.dp)) {
-            Field(label = "Ćwiczenie") {
-                AppInput(
-                    value = pe,
-                    onValueChange = {
-                        viewModel.setPe(it)
-                        showSuggestions = true
-                    },
-                    placeholder = "np. Przysiad ze sztangą"
+            // Dodaj serię
+            SectionH2(text = "Dodaj serię")
+            Card(modifier = Modifier.padding(top = 0.dp)) {
+                Field(label = "Ćwiczenie") {
+                    AppInput(
+                        value = pe,
+                        onValueChange = {
+                            viewModel.setPe(it)
+                            showSuggestions = true
+                        },
+                        placeholder = "np. Przysiad ze sztangą"
+                    )
+                }
+
+                if (matchingSuggestions.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(AppTheme.colors.bg)
+                            .border(1.dp, AppTheme.colors.line, RoundedCornerShape(10.dp))
+                    ) {
+                        matchingSuggestions.forEachIndexed { idx, s ->
+                            if (idx > 0) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(1.dp)
+                                        .background(AppTheme.colors.line)
+                                )
+                            }
+                            Text(
+                                text = s,
+                                fontSize = 15.sp,
+                                color = AppTheme.colors.ink,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        viewModel.setPe(s)
+                                        showSuggestions = false
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                            )
+                        }
+                    }
+                }
+
+                if (lastEntry != null) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "Ostatnio (${DateUtils.dlabel(lastEntry.d)}): ${lastEntry.kg} kg × ${lastEntry.r} × ${lastEntry.s} ",
+                            fontSize = 14.sp,
+                            color = AppTheme.colors.mut
+                        )
+                        Text(
+                            text = "użyj",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = AppTheme.colors.acc,
+                            textDecoration = TextDecoration.Underline,
+                            modifier = Modifier.clickable { handleFillLast() }
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Field(label = "Ciężar kg", modifier = Modifier.weight(1f)) {
+                        AppInput(
+                            value = kg,
+                            onValueChange = { kg = it },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier.focusRequester(kgFocusRequester)
+                        )
+                    }
+                    Field(label = "Powtórzenia", modifier = Modifier.weight(1f)) {
+                        AppInput(
+                            value = reps,
+                            onValueChange = { reps = it },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                        )
+                    }
+                    Field(label = "Serie", modifier = Modifier.weight(1f)) {
+                        AppInput(
+                            value = setsCount,
+                            onValueChange = { setsCount = it },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+                GoButton(
+                    label = "Zapisz serię",
+                    onClick = handleAddSet,
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
 
-            if (matchingSuggestions.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(4.dp))
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(AppTheme.colors.bg)
-                        .border(1.dp, AppTheme.colors.line, RoundedCornerShape(10.dp))
+            // Timer przerwy
+            Card {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    matchingSuggestions.forEachIndexed { idx, s ->
-                        if (idx > 0) {
+                    Column {
+                        Text(
+                            text = "Przerwa między seriami",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = AppTheme.colors.ink
+                        )
+                        if (restSeconds > 0) {
+                            val mm = restSeconds / 60
+                            val ss = restSeconds % 60
+                            Text(
+                                text = String.format(Locale.US, "%d:%02d", mm, ss),
+                                fontSize = 34.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = AppTheme.colors.acc
+                            )
+                        } else {
+                            Text(
+                                text = "Uruchamia się automatycznie po zapisaniu serii",
+                                fontSize = 13.sp,
+                                color = AppTheme.colors.mut
+                            )
+                        }
+                    }
+                    if (restSeconds > 0) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            MiniButton(
+                                label = "+30 s",
+                                onClick = { viewModel.addRestTime(30) }
+                            )
+                            MiniButton(
+                                label = "Stop",
+                                onClick = { viewModel.stopRestTimer() }
+                            )
+                        }
+                    }
+                }
+
+                if (restSeconds > 0 && restTotal > 0) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Bar(pct = (restSeconds.toDouble() / restTotal.toDouble()) * 100.0)
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf(60 to "1 min", 90 to "90 s", 120 to "2 min", 180 to "3 min").forEach { (sec, label) ->
+                        ChipButton(
+                            label = label,
+                            active = restSeconds > 0 && restTotal == sec,
+                            onClick = { viewModel.startRestTimer(sec) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+
+            // Dzisiejszy trening
+            SectionH2(text = "Dzisiejszy trening")
+            Card(modifier = Modifier.padding(top = 0.dp)) {
+                if (todaySets.isEmpty()) {
+                    Text(
+                        text = "Nic jeszcze nie zapisano.",
+                        fontSize = 15.sp,
+                        color = AppTheme.colors.mut
+                    )
+                } else {
+                    todaySets.forEachIndexed { index, s ->
+                        if (index > 0) {
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -230,158 +409,72 @@ fun TrainingScreen(viewModel: JournalViewModel) {
                                     .background(AppTheme.colors.line)
                             )
                         }
-                        Text(
-                            text = s,
-                            fontSize = 15.sp,
-                            color = AppTheme.colors.ink,
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable {
-                                    viewModel.setPe(s)
-                                    showSuggestions = false
-                                }
-                                .padding(horizontal = 12.dp, vertical = 10.dp)
-                        )
+                                .padding(vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = s.e,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Normal,
+                                    color = AppTheme.colors.ink
+                                )
+                                Text(
+                                    text = "${s.kg} kg × ${s.r} powt. × ${s.s} ${if (s.s == 1) "seria" else "serie"}",
+                                    fontSize = 13.sp,
+                                    color = AppTheme.colors.mut
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .clickable { handleDelSet(s.id) },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "×",
+                                    fontSize = 22.sp,
+                                    color = AppTheme.colors.mut
+                                )
+                            }
+                        }
                     }
-                }
-            }
 
-            if (lastEntry != null) {
-                Spacer(modifier = Modifier.height(6.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Ostatnio (${DateUtils.dlabel(lastEntry.d)}): ${lastEntry.kg} kg × ${lastEntry.r} × ${lastEntry.s} ",
+                        text = "Objętość: ${fmtN(totalVolume)} kg",
                         fontSize = 14.sp,
                         color = AppTheme.colors.mut
                     )
-                    Text(
-                        text = "użyj",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = AppTheme.colors.acc,
-                        textDecoration = TextDecoration.Underline,
-                        modifier = Modifier.clickable { handleFillLast() }
-                    )
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(
+            // Przykładowe plany
+            SectionH2(text = "Przykładowe plany")
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Field(label = "Ciężar kg", modifier = Modifier.weight(1f)) {
-                    AppInput(
-                        value = kg,
-                        onValueChange = { kg = it },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
-                    )
-                }
-                Field(label = "Powtórzenia", modifier = Modifier.weight(1f)) {
-                    AppInput(
-                        value = reps,
-                        onValueChange = { reps = it },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                    )
-                }
-                Field(label = "Serie", modifier = Modifier.weight(1f)) {
-                    AppInput(
-                        value = setsCount,
-                        onValueChange = { setsCount = it },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                planKeys.forEach { k ->
+                    ChipButton(
+                        label = k,
+                        active = k == plan,
+                        onClick = { plan = k }
                     )
                 }
             }
-
-            Spacer(modifier = Modifier.height(10.dp))
-            GoButton(
-                label = "Zapisz serię",
-                onClick = handleAddSet,
-                modifier = Modifier.fillMaxWidth()
-            )
         }
 
-        // Dzisiejszy trening
-        SectionH2(text = "Dzisiejszy trening")
-        Card(modifier = Modifier.padding(top = 0.dp)) {
-            if (todaySets.isEmpty()) {
-                Text(
-                    text = "Nic jeszcze nie zapisano.",
-                    fontSize = 15.sp,
-                    color = AppTheme.colors.mut
-                )
-            } else {
-                todaySets.forEachIndexed { index, s ->
-                    if (index > 0) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(1.dp)
-                                .background(AppTheme.colors.line)
-                        )
-                    }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 10.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = s.e,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Normal,
-                                color = AppTheme.colors.ink
-                            )
-                            Text(
-                                text = "${s.kg} kg × ${s.r} powt. × ${s.s} ${if (s.s == 1) "seria" else "serie"}",
-                                fontSize = 13.sp,
-                                color = AppTheme.colors.mut
-                            )
-                        }
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .clickable { handleDelSet(s.id) },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "×",
-                                fontSize = 22.sp,
-                                color = AppTheme.colors.mut
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "Objętość: ${fmtN(totalVolume)} kg",
-                    fontSize = 14.sp,
-                    color = AppTheme.colors.mut
-                )
-            }
-        }
-
-        // Przykładowe plany
-        SectionH2(text = "Przykładowe plany")
-        FlowRow(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            planKeys.forEach { k ->
-                ChipButton(
-                    label = k,
-                    active = k == plan,
-                    onClick = { plan = k }
-                )
-            }
-        }
-
-        currentPlanDays.forEach { day ->
+        items(
+            items = currentPlanDays,
+            key = { day -> "plan_${plan}_${day.dayName}" }
+        ) { day ->
             Card {
                 Text(
                     text = day.dayName,
@@ -435,134 +528,136 @@ fun TrainingScreen(viewModel: JournalViewModel) {
             }
         }
 
-        Card {
-            Text(
-                text = "Jak robić progres",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = AppTheme.colors.ink
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = "Zostań przy tym samym ciężarze, aż we wszystkich seriach zrobisz górną liczbę powtórzeń. Wtedy dodaj 2,5 kg i wróć do dolnego zakresu. Między seriami w ćwiczeniach wielostawowych odpoczywaj 2–3 minuty. Dotknij ćwiczenia, żeby wpisać je do formularza na górze.",
-                fontSize = 14.sp,
-                color = AppTheme.colors.mut,
-                lineHeight = 20.sp
-            )
-        }
-
-        // Biblioteka ćwiczeń
-        SectionH2(text = "Biblioteka ćwiczeń (${JournalData.TOTAL_LIBRARY_EXERCISES})")
-        AppInput(
-            value = eq,
-            onValueChange = {
-                eq = it
-                exMax = 40
-            },
-            placeholder = "Szukaj ćwiczenia"
-        )
-
-        if (eq.isEmpty()) {
-            Spacer(modifier = Modifier.height(10.dp))
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                JournalData.EXERCISE_LIBRARY.keys.forEach { k ->
-                    ChipButton(
-                        label = k,
-                        active = k == exg,
-                        onClick = {
-                            exg = k
-                            exMax = 40
-                        }
-                    )
-                }
-            }
-        }
-
-        Card {
-            if (filteredLibrary.isEmpty()) {
+        item {
+            Card {
                 Text(
-                    text = "Nic nie znaleziono.",
-                    fontSize = 15.sp,
-                    color = AppTheme.colors.mut
+                    text = "Jak robić progres",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = AppTheme.colors.ink
                 )
-            } else {
-                val toShow = filteredLibrary.take(exMax)
-                toShow.forEachIndexed { index, n ->
-                    if (index > 0) Spacer(modifier = Modifier.height(6.dp))
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(AppTheme.colors.bg)
-                            .border(1.dp, AppTheme.colors.line, RoundedCornerShape(10.dp))
-                            .clickable { handleUseExercise(n) }
-                            .padding(horizontal = 12.dp, vertical = 10.dp)
-                    ) {
-                        Text(
-                            text = n,
-                            fontSize = 16.sp,
-                            color = AppTheme.colors.ink
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Zostań przy tym samym ciężarze, aż we wszystkich seriach zrobisz górną liczbę powtórzeń. Wtedy dodaj 2,5 kg i wróć do dolnego zakresu. Między seriami w ćwiczeniach wielostawowych odpoczywaj 2–3 minuty. Dotknij ćwiczenia, żeby wpisać je do formularza na górze.",
+                    fontSize = 14.sp,
+                    color = AppTheme.colors.mut,
+                    lineHeight = 20.sp
+                )
+            }
+
+            // Biblioteka ćwiczeń
+            SectionH2(text = "Biblioteka ćwiczeń (${JournalData.TOTAL_LIBRARY_EXERCISES})")
+            AppInput(
+                value = eq,
+                onValueChange = {
+                    eq = it
+                    exMax = 40
+                },
+                placeholder = "Szukaj ćwiczenia"
+            )
+
+            if (eq.isEmpty()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    JournalData.EXERCISE_LIBRARY.keys.forEach { k ->
+                        ChipButton(
+                            label = k,
+                            active = k == exg,
+                            onClick = {
+                                exg = k
+                                exMax = 40
+                            }
                         )
                     }
                 }
+            }
 
-                if (filteredLibrary.size > exMax) {
-                    Spacer(modifier = Modifier.height(10.dp))
-                    GoButton(
-                        label = "Pokaż więcej (${filteredLibrary.size - exMax})",
-                        onClick = { exMax += 40 },
-                        modifier = Modifier.fillMaxWidth()
+            Card {
+                if (filteredLibrary.isEmpty()) {
+                    Text(
+                        text = "Nic nie znaleziono.",
+                        fontSize = 15.sp,
+                        color = AppTheme.colors.mut
                     )
+                } else {
+                    val toShow = filteredLibrary.take(exMax)
+                    toShow.forEachIndexed { index, n ->
+                        if (index > 0) Spacer(modifier = Modifier.height(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(AppTheme.colors.bg)
+                                .border(1.dp, AppTheme.colors.line, RoundedCornerShape(10.dp))
+                                .clickable { handleUseExercise(n) }
+                                .padding(horizontal = 12.dp, vertical = 10.dp)
+                        ) {
+                            Text(
+                                text = n,
+                                fontSize = 16.sp,
+                                color = AppTheme.colors.ink
+                            )
+                        }
+                    }
+
+                    if (filteredLibrary.size > exMax) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        GoButton(
+                            label = "Pokaż więcej (${filteredLibrary.size - exMax})",
+                            onClick = { exMax += 40 },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
             }
-        }
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(
-            text = "Dotknij ćwiczenia, żeby wpisać je do formularza serii na górze.",
-            fontSize = 14.sp,
-            color = AppTheme.colors.mut
-        )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "Dotknij ćwiczenia, żeby wpisać je do formularza serii na górze.",
+                fontSize = 14.sp,
+                color = AppTheme.colors.mut
+            )
 
-        // Dodaj własne ćwiczenie
-        SectionH2(text = "Dodaj własne ćwiczenie")
-        Card(modifier = Modifier.padding(top = 0.dp)) {
-            Field(label = "Nazwa ćwiczenia") {
-                AppInput(
-                    value = customExName,
-                    onValueChange = { customExName = it },
-                    placeholder = "np. Face pull"
+            // Dodaj własne ćwiczenie
+            SectionH2(text = "Dodaj własne ćwiczenie")
+            Card(modifier = Modifier.padding(top = 0.dp)) {
+                Field(label = "Nazwa ćwiczenia") {
+                    AppInput(
+                        value = customExName,
+                        onValueChange = { customExName = it },
+                        placeholder = "np. Face pull"
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Field(label = "Serie × powtórzenia", modifier = Modifier.weight(1f)) {
+                        AppInput(
+                            value = customExSr,
+                            onValueChange = { customExSr = it },
+                            placeholder = "3×12"
+                        )
+                    }
+                    Field(label = "Dzień planu", modifier = Modifier.weight(1f)) {
+                        AppInput(
+                            value = customExDay,
+                            onValueChange = { customExDay = it },
+                            placeholder = "np. Dzień A"
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+                GoButton(
+                    label = "Dodaj do Mojego planu",
+                    onClick = handleAddCustomEx,
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Field(label = "Serie × powtórzenia", modifier = Modifier.weight(1f)) {
-                    AppInput(
-                        value = customExSr,
-                        onValueChange = { customExSr = it },
-                        placeholder = "3×12"
-                    )
-                }
-                Field(label = "Dzień planu", modifier = Modifier.weight(1f)) {
-                    AppInput(
-                        value = customExDay,
-                        onValueChange = { customExDay = it },
-                        placeholder = "np. Dzień A"
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(10.dp))
-            GoButton(
-                label = "Dodaj do Mojego planu",
-                onClick = handleAddCustomEx,
-                modifier = Modifier.fillMaxWidth()
-            )
         }
     }
 }

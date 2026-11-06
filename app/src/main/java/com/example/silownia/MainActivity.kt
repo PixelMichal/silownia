@@ -1,11 +1,13 @@
 package com.example.silownia
 
-import android.content.Intent
-import android.net.Uri
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -15,7 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import com.example.silownia.data.num
+import androidx.core.content.ContextCompat
 import com.example.silownia.ui.components.AppBottomBar
 import com.example.silownia.ui.screens.DietScreen
 import com.example.silownia.ui.screens.HealthScreen
@@ -27,16 +29,22 @@ import com.example.silownia.ui.theme.AppTheme
 import com.example.silownia.ui.theme.SilowniaTheme
 import com.example.silownia.viewmodel.AppTab
 import com.example.silownia.viewmodel.JournalViewModel
-import kotlin.math.max
-import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
     private val viewModel: JournalViewModel by viewModels()
 
+    private val requestPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            viewModel.startStepSensor()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        handleIntent(intent)
+        checkActivityRecognitionPermission()
         setContent {
             SilowniaTheme {
                 MainContent(viewModel = viewModel)
@@ -44,26 +52,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        handleIntent(intent)
-    }
-
-    private fun handleIntent(intent: Intent?) {
-        val uri: Uri? = intent?.data
-        if (uri != null) {
-            val krokiParam = uri.getQueryParameter("kroki")
-            if (krokiParam != null) {
-                var dataParam = uri.getQueryParameter("data") ?: viewModel.today
-                if (!Regex("^\\d{4}-\\d{2}-\\d{2}$").matches(dataParam)) {
-                    dataParam = viewModel.today
-                }
-                val stepCount = max(0, num(krokiParam).roundToInt())
-                viewModel.updateState { prev ->
-                    prev.copy(steps = prev.steps + (dataParam to stepCount))
-                }
-                viewModel.setCur(dataParam)
-                viewModel.selectTab(AppTab.HEALTH)
+    private fun checkActivityRecognitionPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val permission = Manifest.permission.ACTIVITY_RECOGNITION
+            if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissionLauncher.launch(permission)
             }
         }
     }

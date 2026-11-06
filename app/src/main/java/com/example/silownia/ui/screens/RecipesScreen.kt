@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -34,7 +35,7 @@ import com.example.silownia.ui.components.ChipButton
 import com.example.silownia.ui.components.DayNav
 import com.example.silownia.ui.components.Field
 import com.example.silownia.ui.components.GoButton
-import com.example.silownia.ui.components.ScreenScroll
+import com.example.silownia.ui.components.ScreenLazyColumn
 import com.example.silownia.ui.components.SectionH2
 import com.example.silownia.ui.components.SelectField
 import com.example.silownia.ui.components.SelectOption
@@ -130,62 +131,69 @@ fun RecipesScreen(viewModel: JournalViewModel) {
     val rmOptions = listOf(SelectOption("", "Automatycznie")) +
             JournalData.MEAL_TYPES.filter { it.first.isNotEmpty() }.map { SelectOption(it.first, it.second) }
 
-    ScreenScroll {
-        DayNav(title = "Przepisy")
+    ScreenLazyColumn {
+        item {
+            DayNav(title = "Przepisy")
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            categories.forEach { k ->
-                ChipButton(
-                    label = k,
-                    active = k == rcat,
-                    onClick = {
-                        rcat = k
-                        rMax = 30
-                    },
-                    modifier = Modifier.weight(1f)
-                )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                categories.forEach { k ->
+                    ChipButton(
+                        label = k,
+                        active = k == rcat,
+                        onClick = {
+                            rcat = k
+                            rMax = 30
+                        },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            AppInput(
+                value = rq,
+                onValueChange = {
+                    rq = it
+                    rMax = 30
+                },
+                placeholder = "Szukaj przepisu"
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+            SelectField(
+                label = "Dodaj do posiłku",
+                value = rmt,
+                options = rmOptions,
+                onSelect = { rmt = it }
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = "Wartości na 1 porcję, szacunkowe. Przepis dodasz do dnia: ${DateUtils.dlabel(cur)}.",
+                fontSize = 14.sp,
+                color = AppTheme.colors.mut
+            )
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
-        AppInput(
-            value = rq,
-            onValueChange = {
-                rq = it
-                rMax = 30
-            },
-            placeholder = "Szukaj przepisu"
-        )
-
-        Spacer(modifier = Modifier.height(10.dp))
-        SelectField(
-            label = "Dodaj do posiłku",
-            value = rmt,
-            options = rmOptions,
-            onSelect = { rmt = it }
-        )
-
-        Spacer(modifier = Modifier.height(10.dp))
-        Text(
-            text = "Wartości na 1 porcję, szacunkowe. Przepis dodasz do dnia: ${DateUtils.dlabel(cur)}.",
-            fontSize = 14.sp,
-            color = AppTheme.colors.mut
-        )
-
         if (visibleRecipes.isEmpty()) {
-            Text(
-                text = "Brak pasujących przepisów.",
-                fontSize = 15.sp,
-                color = AppTheme.colors.mut,
-                modifier = Modifier.padding(top = 12.dp)
-            )
+            item {
+                Text(
+                    text = "Brak pasujących przepisów.",
+                    fontSize = 15.sp,
+                    color = AppTheme.colors.mut,
+                    modifier = Modifier.padding(top = 12.dp)
+                )
+            }
         } else {
-            visibleRecipes.forEach { r ->
+            items(
+                items = visibleRecipes,
+                key = { r -> r.id ?: "${r.cat}_${r.n}" }
+            ) { r ->
                 Card {
                     Text(
                         text = r.n,
@@ -246,93 +254,95 @@ fun RecipesScreen(viewModel: JournalViewModel) {
             }
         }
 
-        if (rTot > 0) {
-            Spacer(modifier = Modifier.height(10.dp))
-            Text(
-                text = "Pokazano $rShown z $rTot.",
-                fontSize = 14.sp,
-                color = AppTheme.colors.mut
-            )
-        }
-
-        if (rTot > rShown) {
-            Spacer(modifier = Modifier.height(10.dp))
-            GoButton(
-                label = "Pokaż więcej (${rTot - rShown})",
-                onClick = { rMax += 30 },
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
-
-        SectionH2(text = "Dodaj własny przepis")
-        Card(modifier = Modifier.padding(top = 0.dp)) {
-            Field(label = "Nazwa") {
-                AppInput(value = myName, onValueChange = { myName = it })
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Field(label = "kcal", modifier = Modifier.weight(1f)) {
-                    AppInput(
-                        value = myK,
-                        onValueChange = { myK = it },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
-                    )
-                }
-                Field(label = "Białko g", modifier = Modifier.weight(1f)) {
-                    AppInput(
-                        value = myP,
-                        onValueChange = { myP = it },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
-                    )
-                }
-                Field(label = "Węgl. g", modifier = Modifier.weight(1f)) {
-                    AppInput(
-                        value = myC,
-                        onValueChange = { myC = it },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
-                    )
-                }
-                Field(label = "Tłuszcz g", modifier = Modifier.weight(1f)) {
-                    AppInput(
-                        value = myF,
-                        onValueChange = { myF = it },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-            Field(label = "Składniki") {
-                AppInput(
-                    value = myIng,
-                    onValueChange = { myIng = it },
-                    singleLine = false,
-                    maxLines = 3,
-                    modifier = Modifier.height(70.dp)
+        item {
+            if (rTot > 0) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = "Pokazano $rShown z $rTot.",
+                    fontSize = 14.sp,
+                    color = AppTheme.colors.mut
                 )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-            Field(label = "Sposób przygotowania") {
-                AppInput(
-                    value = mySteps,
-                    onValueChange = { mySteps = it },
-                    singleLine = false,
-                    maxLines = 4,
-                    modifier = Modifier.height(90.dp)
+            if (rTot > rShown) {
+                Spacer(modifier = Modifier.height(10.dp))
+                GoButton(
+                    label = "Pokaż więcej (${rTot - rShown})",
+                    onClick = { rMax += 30 },
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
-            GoButton(
-                label = "Zapisz w kategorii: $rcat",
-                onClick = handleAddCustomRecipe,
-                modifier = Modifier.fillMaxWidth()
-            )
+            SectionH2(text = "Dodaj własny przepis")
+            Card(modifier = Modifier.padding(top = 0.dp)) {
+                Field(label = "Nazwa") {
+                    AppInput(value = myName, onValueChange = { myName = it })
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Field(label = "kcal", modifier = Modifier.weight(1f)) {
+                        AppInput(
+                            value = myK,
+                            onValueChange = { myK = it },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                        )
+                    }
+                    Field(label = "Białko g", modifier = Modifier.weight(1f)) {
+                        AppInput(
+                            value = myP,
+                            onValueChange = { myP = it },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                        )
+                    }
+                    Field(label = "Węgl. g", modifier = Modifier.weight(1f)) {
+                        AppInput(
+                            value = myC,
+                            onValueChange = { myC = it },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                        )
+                    }
+                    Field(label = "Tłuszcz g", modifier = Modifier.weight(1f)) {
+                        AppInput(
+                            value = myF,
+                            onValueChange = { myF = it },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                Field(label = "Składniki") {
+                    AppInput(
+                        value = myIng,
+                        onValueChange = { myIng = it },
+                        singleLine = false,
+                        maxLines = 3,
+                        modifier = Modifier.height(70.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                Field(label = "Sposób przygotowania") {
+                    AppInput(
+                        value = mySteps,
+                        onValueChange = { mySteps = it },
+                        singleLine = false,
+                        maxLines = 4,
+                        modifier = Modifier.height(90.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+                GoButton(
+                    label = "Zapisz w kategorii: $rcat",
+                    onClick = handleAddCustomRecipe,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
         }
     }
 }

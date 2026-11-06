@@ -109,7 +109,9 @@ data class JournalState(
     val myrec: List<Recipe> = emptyList(),
     val myex: List<CustomExercise> = emptyList(),
     val steps: Map<String, Int> = emptyMap(),
-    val stg: StepGoalConfig? = null
+    val stg: StepGoalConfig? = null,
+    val water: Map<String, Int> = emptyMap(),
+    val wg: Int? = null
 )
 
 object DateUtils {

@@ -28,6 +28,7 @@ import com.example.silownia.ui.components.AppInput
 import com.example.silownia.ui.components.Card
 import com.example.silownia.ui.components.ChartCanvas
 import com.example.silownia.ui.components.ChartPoint
+import com.example.silownia.ui.components.DatePickerField
 import com.example.silownia.ui.components.DayNav
 import com.example.silownia.ui.components.Field
 import com.example.silownia.ui.components.GoButton
@@ -172,13 +173,12 @@ fun ProgressScreen(viewModel: JournalViewModel) {
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
                     )
                 }
-                Field(label = "Data", modifier = Modifier.weight(1f)) {
-                    AppInput(
-                        value = weightDate,
-                        onValueChange = { weightDate = it },
-                        placeholder = "RRRR-MM-DD"
-                    )
-                }
+                DatePickerField(
+                    label = "Data",
+                    value = weightDate,
+                    onValueChange = { weightDate = it },
+                    modifier = Modifier.weight(1f)
+                )
                 GoButton(label = "Zapisz", onClick = handleAddWeight)
             }
         }
